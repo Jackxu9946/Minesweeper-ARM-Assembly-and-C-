@@ -1,0 +1,869 @@
+            TTL CMPE-250 Assembly Backend for Minesweeper
+;****************************************************************
+;This source code consists all subroutines that are exported to be used in 
+;C source file. 
+;Name:  Ayush Rout, Jack Xu
+;Date:  12/04/2018
+;Class:  CMPE-250
+;Section:  01L1 (11 AM)
+;---------------------------------------------------------------
+;Keil Template for KL46 Assembly with Keil C startup
+;R. W. Melton
+;November 13, 2017
+;****************************************************************
+;Assembler directives
+            THUMB
+            GBLL  MIXED_ASM_C
+MIXED_ASM_C SETL  {TRUE}
+            OPT   64  ;Turn on listing macro expansions
+;****************************************************************
+;Include files
+            GET  MKL46Z4.s     ;Included by start.s
+            OPT  1   ;Turn on listing
+;****************************************************************
+;EQUates
+;****************************************************************
+;---------------------------------------------------------------
+;NVIC_ICER
+;31-00:CLRENA=masks for HW IRQ sources;
+;             read:   0 = unmasked;   1 = masked
+;             write:  0 = no effect;  1 = mask
+;22:PIT IRQ mask
+;12:UART0 IRQ mask
+NVIC_ICER_PIT_MASK    EQU  PIT_IRQ_MASK
+NVIC_ICER_UART0_MASK  EQU  UART0_IRQ_MASK
+;---------------------------------------------------------------
+;NVIC_ICPR
+;31-00:CLRPEND=pending status for HW IRQ sources;
+;             read:   0 = not pending;  1 = pending
+;             write:  0 = no effect;
+;                     1 = change status to not pending
+;22:PIT IRQ pending status
+;12:UART0 IRQ pending status
+NVIC_ICPR_PIT_MASK    EQU  PIT_IRQ_MASK
+NVIC_ICPR_UART0_MASK  EQU  UART0_IRQ_MASK
+;---------------------------------------------------------------
+;NVIC_IPR0-NVIC_IPR7
+;2-bit priority:  00 = highest; 11 = lowest
+;--PIT
+PIT_IRQ_PRIORITY    EQU  0
+NVIC_IPR_PIT_MASK   EQU  (3 << PIT_PRI_POS)
+NVIC_IPR_PIT_PRI_0  EQU  (PIT_IRQ_PRIORITY << UART0_PRI_POS)
+;--UART0
+UART0_IRQ_PRIORITY    EQU  3
+NVIC_IPR_UART0_MASK   EQU  (3 << UART0_PRI_POS)
+NVIC_IPR_UART0_PRI_3  EQU  (UART0_IRQ_PRIORITY << UART0_PRI_POS)
+;---------------------------------------------------------------
+;NVIC_ISER
+;31-00:SETENA=masks for HW IRQ sources;
+;             read:   0 = masked;     1 = unmasked
+;             write:  0 = no effect;  1 = unmask
+;22:PIT IRQ mask
+;12:UART0 IRQ mask
+NVIC_ISER_PIT_MASK    EQU  PIT_IRQ_MASK
+NVIC_ISER_UART0_MASK  EQU  UART0_IRQ_MASK
+;---------------------------------------------------------------
+;PIT_LDVALn:  PIT load value register n
+;31-00:TSV=timer start value (period in clock cycles - 1)
+;Clock ticks for 0.01 s at 24 MHz count rate
+;0.01 s * 24,000,000 Hz = 240,000
+;TSV = 240,000 - 1
+PIT_LDVAL_10ms  EQU  239999
+;---------------------------------------------------------------
+;PIT_MCR:  PIT module control register
+;1-->    0:FRZ=freeze (continue'/stop in debug mode)
+;0-->    1:MDIS=module disable (PIT section)
+;               RTI timer not affected
+;               must be enabled before any other PIT setup
+PIT_MCR_EN_FRZ  EQU  PIT_MCR_FRZ_MASK
+;---------------------------------------------------------------
+;PIT_TCTRLn:  PIT timer control register n
+;0-->   2:CHN=chain mode (enable)
+;1-->   1:TIE=timer interrupt enable
+;1-->   0:TEN=timer enable
+PIT_TCTRL_CH_IE  EQU  (PIT_TCTRL_TEN_MASK :OR: PIT_TCTRL_TIE_MASK)
+;---------------------------------------------------------------
+;PORTx_PCRn (Port x pin control register n [for pin n])
+;___->10-08:Pin mux control (select 0 to 8)
+;Use provided PORT_PCR_MUX_SELECT_2_MASK
+;---------------------------------------------------------------
+;Port A
+PORT_PCR_SET_PTA1_UART0_RX  EQU  (PORT_PCR_ISF_MASK :OR: \
+                                  PORT_PCR_MUX_SELECT_2_MASK)
+PORT_PCR_SET_PTA2_UART0_TX  EQU  (PORT_PCR_ISF_MASK :OR: \
+                                  PORT_PCR_MUX_SELECT_2_MASK)
+;---------------------------------------------------------------
+;SIM_SCGC4
+;1->10:UART0 clock gate control (enabled)
+;Use provided SIM_SCGC4_UART0_MASK
+;---------------------------------------------------------------
+;SIM_SCGC5
+;1->09:Port A clock gate control (enabled)
+;Use provided SIM_SCGC5_PORTA_MASK
+;---------------------------------------------------------------
+;SIM_SOPT2
+;01=27-26:UART0SRC=UART0 clock source select
+;         (PLLFLLSEL determines MCGFLLCLK' or MCGPLLCLK/2)
+; 1=   16:PLLFLLSEL=PLL/FLL clock select (MCGPLLCLK/2)
+SIM_SOPT2_UART0SRC_MCGPLLCLK  EQU  \
+                                 (1 << SIM_SOPT2_UART0SRC_SHIFT)
+SIM_SOPT2_UART0_MCGPLLCLK_DIV2 EQU \
+    (SIM_SOPT2_UART0SRC_MCGPLLCLK :OR: SIM_SOPT2_PLLFLLSEL_MASK)
+;---------------------------------------------------------------
+;SIM_SOPT5
+; 0->   16:UART0 open drain enable (disabled)
+; 0->   02:UART0 receive data select (UART0_RX)
+;00->01-00:UART0 transmit data select source (UART0_TX)
+SIM_SOPT5_UART0_EXTERN_MASK_CLEAR  EQU  \
+                               (SIM_SOPT5_UART0ODE_MASK :OR: \
+                                SIM_SOPT5_UART0RXSRC_MASK :OR: \
+                                SIM_SOPT5_UART0TXSRC_MASK)
+;---------------------------------------------------------------
+;UART0_BDH
+;    0->  7:LIN break detect IE (disabled)
+;    0->  6:RxD input active edge IE (disabled)
+;    0->  5:Stop bit number select (1)
+;00001->4-0:SBR[12:0] (UART0CLK / [9600 * (OSR + 1)]) 
+;UART0CLK is MCGPLLCLK/2
+;MCGPLLCLK is 96 MHz
+;MCGPLLCLK/2 is 48 MHz
+;SBR = 48 MHz / (9600 * 16) = 312.5 --> 312 = 0x138
+UART0_BDH_9600  EQU  0x01
+;---------------------------------------------------------------
+;UART0_BDL
+;0x38->7-0:SBR[7:0] (UART0CLK / [9600 * (OSR + 1)])
+;UART0CLK is MCGPLLCLK/2
+;MCGPLLCLK is 96 MHz
+;MCGPLLCLK/2 is 48 MHz
+;SBR = 48 MHz / (9600 * 16) = 312.5 --> 312 = 0x138
+UART0_BDL_9600  EQU  0x38
+;---------------------------------------------------------------
+;UART0_C1
+;0-->7:LOOPS=loops select (normal)
+;0-->6:DOZEEN=doze enable (disabled)
+;0-->5:RSRC=receiver source select (internal--no effect LOOPS=0)
+;0-->4:M=9- or 8-bit mode select 
+;        (1 start, 8 data [lsb first], 1 stop)
+;0-->3:WAKE=receiver wakeup method select (idle)
+;0-->2:IDLE=idle line type select (idle begins after start bit)
+;0-->1:PE=parity enable (disabled)
+;0-->0:PT=parity type (even parity--no effect PE=0)
+UART0_C1_8N1  EQU  0x00
+;---------------------------------------------------------------
+;UART0_C2
+;0-->7:TIE=transmit IE for TDRE (disabled)
+;0-->6:TCIE=transmission complete IE for TC (disabled)
+;0-->5:RIE=receiver IE for RDRF (disabled)
+;0-->4:ILIE=idle line IE for IDLE (disabled)
+;1-->3:TE=transmitter enable (enabled)
+;1-->2:RE=receiver enable (enabled)
+;0-->1:RWU=receiver wakeup control (normal)
+;0-->0:SBK=send break (disabled, normal)
+UART0_C2_T_R    EQU  (UART0_C2_TE_MASK :OR: UART0_C2_RE_MASK)
+UART0_C2_T_RI   EQU  (UART0_C2_RIE_MASK :OR: UART0_C2_T_R)
+UART0_C2_TI_RI  EQU  (UART0_C2_TIE_MASK :OR: UART0_C2_T_RI)
+;---------------------------------------------------------------
+;UART0_C3
+;0-->7:R8T9=9th data bit for receiver (not used M=0)
+;           10th data bit for transmitter (not used M10=0)
+;0-->6:R9T8=9th data bit for transmitter (not used M=0)
+;           10th data bit for receiver (not used M10=0)
+;0-->5:TXDIR=UART_TX pin direction in single-wire mode
+;            (no effect LOOPS=0)
+;0-->4:TXINV=transmit data inversion (not inverted)
+;0-->3:ORIE=overrun IE for OR (disabled)
+;0-->2:NEIE=noise error IE for NF (disabled)
+;0-->1:FEIE=framing error IE for FE (disabled)
+;0-->0:PEIE=parity error IE for PF (disabled)
+UART0_C3_NO_TXINV  EQU  0x00
+;---------------------------------------------------------------
+;UART0_C4
+;    0-->  7:MAEN1=match address mode enable 1 (disabled)
+;    0-->  6:MAEN2=match address mode enable 2 (disabled)
+;    0-->  5:M10=10-bit mode select (not selected)
+;01111-->4-0:OSR=over sampling ratio (16)
+;               = 1 + OSR for 3 <= OSR <= 31
+;               = 16 for 0 <= OSR <= 2 (invalid values)
+UART0_C4_OSR_16           EQU  0x0F
+UART0_C4_NO_MATCH_OSR_16  EQU  UART0_C4_OSR_16
+;---------------------------------------------------------------
+;UART0_C5
+;  0-->  7:TDMAE=transmitter DMA enable (disabled)
+;  0-->  6:Reserved; read-only; always 0
+;  0-->  5:RDMAE=receiver full DMA enable (disabled)
+;000-->4-2:Reserved; read-only; always 0
+;  0-->  1:BOTHEDGE=both edge sampling (rising edge only)
+;  0-->  0:RESYNCDIS=resynchronization disable (enabled)
+UART0_C5_NO_DMA_SSR_SYNC  EQU  0x00
+;---------------------------------------------------------------
+;UART0_S1
+;0-->7:TDRE=transmit data register empty flag; read-only
+;0-->6:TC=transmission complete flag; read-only
+;0-->5:RDRF=receive data register full flag; read-only
+;1-->4:IDLE=idle line flag; write 1 to clear (clear)
+;1-->3:OR=receiver overrun flag; write 1 to clear (clear)
+;1-->2:NF=noise flag; write 1 to clear (clear)
+;1-->1:FE=framing error flag; write 1 to clear (clear)
+;1-->0:PF=parity error flag; write 1 to clear (clear)
+UART0_S1_CLEAR_FLAGS  EQU  (UART0_S1_IDLE_MASK :OR: \
+                            UART0_S1_OR_MASK :OR: \
+                            UART0_S1_NF_MASK :OR: \
+                            UART0_S1_FE_MASK :OR: \
+                            UART0_S1_PF_MASK)
+;---------------------------------------------------------------
+;UART0_S2
+;1-->7:LBKDIF=LIN break detect interrupt flag (clear)
+;             write 1 to clear
+;1-->6:RXEDGIF=RxD pin active edge interrupt flag (clear)
+;              write 1 to clear
+;0-->5:(reserved); read-only; always 0
+;0-->4:RXINV=receive data inversion (disabled)
+;0-->3:RWUID=receive wake-up idle detect
+;0-->2:BRK13=break character generation length (10)
+;0-->1:LBKDE=LIN break detect enable (disabled)
+;0-->0:RAF=receiver active flag; read-only
+UART0_S2_NO_RXINV_BRK10_NO_LBKDETECT_CLEAR_FLAGS  EQU  \
+        (UART0_S2_LBKDIF_MASK :OR: UART0_S2_RXEDGIF_MASK)
+;---------------------------------------------------------------
+;Interrupt should be set to the highest priority
+PIT_IRQ_PRI 	 	EQU  0
+;---------------------------------------------------------------
+;Other equates
+;required buffer displacements and pointer helpers
+MAX_STRING			EQU	 79				;max buffer capacity
+CR          		EQU  0x0D			;carriage return
+LF          		EQU  0x0A			;line feed
+NULL        		EQU  0x00			;null value = 0
+IN_PTR				EQU	 0				;inpointer
+OUT_PTR				EQU	 4				;outpointer
+BUF_STRT			EQU	 8				;buffer start
+BUF_PAST			EQU	 12				;buffer past
+BUF_SIZE			EQU	 16				;buffer size
+NUM_ENQD			EQU	 17				;number enqueued
+Q_BUF_SZ			EQU	 4				;queue buffer size
+Q_REC_SZ			EQU	 18				;queue record size
+RDRF_CHARSET_MASK	\
+					EQU	 0x20
+;Port D
+PTD5_MUX_GPIO       EQU     (1 << PORT_PCR_MUX_SHIFT)
+SET_PTD5_GPIO       EQU     (PORT_PCR_ISF_MASK :OR: \
+                             PTD5_MUX_GPIO)
+;Port E
+PTE29_MUX_GPIO      EQU     (1 << PORT_PCR_MUX_SHIFT)
+SET_PTE29_GPIO      EQU     (PORT_PCR_ISF_MASK :OR: \
+                             PTE29_MUX_GPIO)
+POS_RED             EQU     29
+POS_GREEN           EQU     5
+LED_RED_MASK        EQU     (1 << POS_RED)
+LED_GREEN_MASK      EQU     (1 << POS_GREEN)
+LED_PORTD_MASK      EQU     LED_GREEN_MASK
+LED_PORTE_MASK      EQU     LED_RED_MASK
+;---------------------------------------------------------------
+;Program
+;C source will contain main ()
+;Only subroutines and ISRs in this assembly source
+				AREA    MyCode,CODE,READONLY
+				EXPORT	PutStringSB
+				EXPORT	Init_UART0_IRQ
+				EXPORT	Init_PIT_IRQ
+				EXPORT	GetChar
+				EXPORT	PutChar
+				EXPORT	UART0_IRQHandler
+				EXPORT	PIT_IRQHandler
+				EXPORT	TimeStart
+				EXPORT	Init_LED
+				EXPORT 	Count
+					
+;>>>>> begin subroutine code <<<<<
+TimeStart		PROC	{},{}
+				PUSH	{R0-R1}
+				;Initialize RunStopWatch to 1 and Count to 0
+				LDR		R0,=Count
+				MOVS	R1,#0
+				STR		R1,[R0,#0]
+				LDR		R0,=RunStopWatch
+				MOVS	R1,#1
+				STRB	R1,[R0,#0]
+				POP		{R0-R1}
+				BX 		LR
+				ENDP
+				
+Init_PIT_IRQ	PROC	{R0-R14}
+;This subroutine initializes the PIT to generate an interrupt every 0.01 second from
+;channel 0.
+;Input Parameters:	NONE
+;Output Parameters: NONE
+;Modified register list: NONE 
+;Subroutines called: NONE
+				CPSID 	I
+				PUSH 	{R0-R2, LR}
+				LDR 	R0, =SIM_SCGC6
+				LDR 	R1, =SIM_SCGC6_PIT_MASK
+				LDR 	R2, [R0, #0]				;current SIM_SCGC6 value
+				ORRS	R2, R2, R1					;only PIT bit set
+				STR 	R2, [R0, #0]				;update SIM_SCGC6
+				LDR 	R0, =PIT_BASE				;Enable PIT timer module
+				LDR 	R1, =PIT_MCR_EN_FRZ			
+				STR 	R1, [R0, #PIT_MCR_OFFSET]
+				LDR 	R0, =PIT_CH0_BASE			
+				LDR 	R1, =PIT_LDVAL_10ms 
+				STR 	R1, [R0, #PIT_LDVAL_OFFSET]
+				LDR 	R0, =PIT_CH0_BASE			;Enable PIT timer channel 0 for interrupts
+				LDR 	R1, =PIT_TCTRL_TEN_MASK
+				LDR 	R2, [R0, #PIT_TCTRL_OFFSET]
+				BICS	R2, R2, R1
+				STR 	R2, [R0, #PIT_TCTRL_OFFSET]
+				LDR 	R0, =PIT_CH0_BASE			;Enable PIT timer channel 0 for interrupts
+				MOVS 	R1, #PIT_TCTRL_CH_IE
+				STR 	R1, [R0, #PIT_TCTRL_OFFSET]
+				;Unmask PIT Interrupts
+				LDR 	R0, =NVIC_ISER
+				LDR 	R1, =PIT_IRQ_MASK
+				STR 	R1, [R0, #0]
+				;Set PIT Interrupt Priority
+				LDR 	R0, =PIT_IPR
+				LDR 	R1, =(PIT_IRQ_PRI << PIT_PRI_POS)
+				STR 	R1, [R0, #0]
+				CPSIE 	I
+				POP 	{R0-R2, PC}
+				ENDP
+					
+Init_LED		PROC	{},{}
+				PUSH	{R0-R2}
+				;enable clock for Port D and Port E modules
+				LDR		R0,=SIM_SCGC5
+				LDR		R1,=(SIM_SCGC5_PORTD_MASK :OR: \
+							SIM_SCGC5_PORTE_MASK)
+				LDR		R2,[R0,#0]
+				ORRS	R2,R2,R1
+				STR		R2,[R0,#0]
+				;select Port E Pin 29 for GPIO to red LED
+				LDR		R0,=PORTE_BASE
+				LDR		R1,=SET_PTE29_GPIO
+				STR		R1,[R0,#PORTE_PCR29_OFFSET]
+				;select Port D Pin 5 for GPIO to green LED
+				LDR		R0,=PORTD_BASE
+				LDR		R1,=SET_PTD5_GPIO
+				STR		R1,[R0,#PORTD_PCR5_OFFSET]
+				;port data direction
+				LDR		R0,=FGPIOD_BASE
+				LDR		R1,=LED_PORTD_MASK
+				STR		R1,[R0,#GPIO_PDDR_OFFSET]
+				LDR		R0,=FGPIOE_BASE
+				LDR		R1,=LED_PORTE_MASK
+				STR		R1,[R0,#GPIO_PDDR_OFFSET]
+				POP		{R0-R2}
+				BX		LR	
+				ENDP
+					
+				LTORG
+				
+InitQueue		PROC	{},{}
+;This subroutine initializes an empty queue
+;Input parameters: R0- queue buffer address
+;				   R1- queue record 
+;				   R2- size of queue
+;Output parameters: 	  None
+;Modified registers list: None
+;Subroutines called: NONE
+				PUSH	{R0-R3,LR}				;preserve list of registers and R0-R3
+				STR		R0,[R1,#IN_PTR]			;initialize In pointer to start of queue
+				STR		R0,[R1,#OUT_PTR]		;initialize Out pointer to start of queue
+				STR		R0,[R1,#BUF_STRT]		;set buffer start address to the queue buffer address
+				MOVS	R2,#Q_BUF_SZ			;retrieve Q_BUF_SIZE
+				ADDS	R3,R0,R2				;R3 = R0 + R2
+				STRB	R3,[R1,#BUF_PAST]		;store new address
+				STRB	R2,[R1,#BUF_SIZE]		;set buffer depth to 4
+				MOVS	R3,#0					;clear R3
+				STRB	R3,[R1,#NUM_ENQD]		;Initialize Number Enqueued as 0
+				POP		{R0-R3,PC}				;restore used registers and program counter
+				ENDP							;end subroutine
+					
+Dequeue			PROC	{},{}
+;This subroutine dequeues a character from queue
+;Input parameters: R1- Address of queue record
+;Output: set C flag: success(0), failure(1)
+;		 R0: character dequeued
+;Modified registers list: PSR (C flag)
+;						  R0  (dequeued char)
+;Subroutines called: NONE
+				PUSH	{R1-R4}
+				LDRB	R3,[R1,#NUM_ENQD]
+				CMP		R3,#0
+				BEQ		Invalid
+				LDR		R0,[R1,#OUT_PTR]
+				LDRB	R0,[R0,#0]
+				LDRB	R3,[R1,#NUM_ENQD]
+				SUBS	R3,R3,#1
+				STRB	R3,[R1,#NUM_ENQD]
+				LDR		R3,[R1,#OUT_PTR]
+				ADDS	R3,R3,#1
+				STRB	R3,[R1,#OUT_PTR]
+				LDR		R4,[R1,#BUF_PAST]
+				CMP		R3,R4
+				BLO		clearC
+				LDR		R3,[R1,#BUF_STRT]
+				STR		R3,[R1,#OUT_PTR] 
+clearC			MRS		R1, APSR				;clears C bit of APSR
+				MOVS 	R3, #0x20
+				LSLS 	R1, R1, #24
+				BICS 	R1, R1, R3
+				MSR		APSR, R1
+				B 		endDequeue				;end subroutine
+Invalid			MRS 	R1, APSR				;set C bit of APSR
+				MOVS 	R3, #0x20
+				LSLS 	R3, R3, #24
+				ORRS 	R1, R1, R3
+				MSR 	APSR, R1			
+endDequeue		POP		{R1-R4}
+				BX		LR						;go back to parent loop
+				ENDP							;end subroutine
+					
+Enqueue			PROC	{},{}
+;This subroutine enqueues a character onto queue
+;Input parameters:	R0- character to enqueue
+;					R1- address of queue record structure
+;Output: set C flag: success(0), failure(1)
+;Modified registers list: PSR (C flag)
+;Subroutines called: NONE
+				PUSH	{R3-R6}					;preserve registers R3-R6
+				LDRB	R3,[R1,#NUM_ENQD]		;get NumEnqueued
+				LDRB	R4,[R1,#BUF_SIZE]		;get BufferSize
+				CMP		R3,R4					;compare the two
+				BHS		carry					;if value>=buffersize go to carry
+				LDR		R5,[R1,#IN_PTR]			;get inpointer
+				LDR		R6,[R1,#BUF_PAST]		;get buffer past
+				STRB	R0,[R5,#0]				;store value at inpointer
+				ADDS	R3,R3,#1				;increment in NumEnqueued
+				STRB	R3,[R1,#NUM_ENQD]		;store NumEnqueued
+				ADDS	R5,R5,#1				;increment inpointer
+				CMP		R5,R6					;compare inpointer with bufferpast
+				BLO		skip					;if inpointer < bufferpast go to skip
+				LDR		R5,[R1,#BUF_STRT]		;reset inpointer
+skip			STR		R5,[R1,#IN_PTR]			;store inpointer into R1
+				MRS     R3,APSR                 ;move APSR into R3
+				MOVS    R4,#0x20                ;move #0x20 into R4 for logical calc
+				LSLS    R4,R4,#24               ;shift to MSB
+				BICS    R3,R3,R4                ;clear C bit of apsr
+				MSR     APSR,R3                     
+				B       endEnqueue              ;quit
+carry     		MRS     R3,APSR                 ;set C bit of apsr
+				MOVS    R4,#0x20                
+				LSLS    R4,R4,#24               
+				ORRS    R3,R3,R4                
+				MSR     APSR,R3         
+endEnqueue		POP		{R3-R6}					;restore registers R3-R6
+				BX		LR
+				ENDP							;end subroutine
+					
+PutNumHex 		PROC    {},{}
+;This subroutine prints to the terminal screen the text hexadecimal representation
+;of the unsigned word value in R0. 
+;	Inputs : 	R0- the unsigned word value 
+;	Outputs: 	NONE
+;	Modified Registers list: NONE
+;Subroutines called: PutChar
+				PUSH	{R0-R2,R7,LR}			;push the register list and registers R0-R2,R7 onto stack to preserve it 
+				MOVS	R7,R0					;save a copy of R0
+				MOVS	R1,#24					;shift value
+putnumhexloop
+				MOVS	R0,R7					
+				LSLS	R0,R0,R1				;shift R0 left
+				LSRS	R0,R0,#28				;shift R0 right
+				CMP		R0,#10					;check if number is biggger than 10 or not
+				BHS		hex						;if yes, its a letter 
+				ADDS	R0,R0,#0x30				;Else its a number
+				B		echo					;echo the number
+hex				ADDS	R0,R0,#55				;convert to ascii
+echo			BL		PutChar					;echo that to terminal
+				ADDS	R1,R1,#4				;shift value += 4
+				CMP		R1,#32					;if shift value is 32 no more chars 
+				BHS		endputnumhexloop		;then end it 
+				B		putnumhexloop			;else go back to start of loop
+endputnumhexloop
+				POP		{R0-R2,R7,PC}			;restore used registers
+				ENDP							;end subroutine
+					
+PutNumUB		PROC	{},{}
+;This subroutine prints to the terminal screen the text decimal representation of the 
+;unsigned byte value in R0.
+;Input parameters: 	R0- value to put the least unsigned bit value to terminal screen
+;Output parameters: NONE
+;Modified Register List: R0 
+;Subroutines called: PutNumU
+				PUSH	{R1,LR}					;push R1 and PC onto stack
+				MOVS	R1,#0xFF 				;moved 0xFF into R1 to mask other numbers
+				ANDS	R0,R0,R1				;mask everything but last byte
+				BL		PutNumU					;branch to PutNumU 
+				POP		{R1,PC}					;restore R1 and PC
+				ENDP							;end subroutine
+					
+GetStringSB		PROC 	{},{}
+;Preventing overrun of the buffer capacity specified in R1, 
+;this subroutine reads a string from the terminal keyboard to memory starting at the address in R0 
+;and adds null termination.  
+;Parameters
+;Inputs : 	NONE
+;Outputs: 	NONE
+;Subroutines called: GetChar, PutChar
+				PUSH	{LR,R0-R6}				;pushes list of registers and R0-R6 onto stack
+				MOVS	R6,R0					;moves the starting address to R6 to retain it for later
+				MOVS	R4,#MAX_STRING			;moves the maximum string capacity into R4
+				SUBS	R4,R4,#1				;subtract 1 from max capacity as NULL termination is added
+				MOVS	R2,#0					;move 0 into R2(counter)
+start			BL		GetChar					;get a character from keyboard
+				CMP		R0,#CR					;compare R0 with carriage return
+				BEQ		endLoop					;if enter is hit on keyboard, go to endLoop
+				CMP		R2,R4					;compare counter with max buffer capacity
+				BEQ		overflow				;if max buffer capacity reached, branch to overflow where it keeps running the loop until enter is hit but doesnt store the feed
+				BL		PutChar					;echoes entered character to terminal screen
+				STRB	R0,[R6,R2]				;store the character entered in the starting address
+				ADDS	R2,R2,#1				;add 1 to counter
+				B		start					;branch back to start of the loop
+overflow		B		start					;keeps accepting characters from keyboard till enter is registered but doesnt store them in memory
+endLoop			MOVS	R3,#NULL				;if enter is hit, it moves NULL(0x00) into R3
+				STRB	R3,[R6,R2]				;store NULL in the memory address in R6 with offset of R2
+				POP		{PC,R0-R6}				;pop the program counter and registers R0-R6
+				ENDP							;end subroutine
+				
+PutStringSB		PROC	{},{}
+;preventing overrun of the buffer capacity specified in R1, this subroutine displays a null-terminated string to the terminal 
+;screen from memory starting at the address in R0. 
+;Parameters
+;Inputs : 	NONE
+;Outputs: 	NONE
+;Subroutines called: PutChar
+				PUSH	{LR,R0-R6}				;push register list and R0-R6 onto stack
+				MOVS	R6,R0					;move the starting address in R0 to R6 to retain it for later use
+				MOVS	R2,#0					;counter 
+start1			LDRB	R0,[R6,R2]				;load the contents at address in R6 with offset R2 into R0
+				CMP		R0,#NULL				;check if R0 is null (or 0x00)
+				BEQ		endLoop1				;if true then branch to endLoop1
+				BL		PutChar					;echo the character to terminal screen
+				ADDS	R2,R2,#1				;add 1 to counter
+				B		start1					;branch back to start of loop(start1)
+endLoop1		POP		{PC,R0-R6}				;restore program counter and registers R0-R6
+				ENDP							;end subroutine
+					
+UART0_IRQHandler	\
+				PROC	{},{}
+;This subroutine handles UART0 transmit and receive interrupts
+;Input Parameters: NONE
+;Output Parameters: NONE
+;Modified Reg list: NONE
+;Subroutines called: Dequeue, Enqueue
+				CPSID	I						;mask interrupts
+				PUSH	{LR,R0-R3}				;preserve LR and R0-R3 registers
+				LDR		R0,=UART0_BASE
+				LDRB	R1,[R0,#UART0_C2_OFFSET]
+				MOVS	R2,#0x80
+				ANDS	R1,R1,R2
+				CMP		R1,#0
+				BNE		TxEn
+				B		CheckRx					;check for Rx interrupt
+TxEn			LDRB	R1,[R0,#UART0_S1_OFFSET]
+				MOVS	R2,#0x80
+				ANDS 	R1,R1,R2
+				CMP		R1,#0
+				BEQ		CheckRx
+				LDR		R1,=TxQueueRecord		;dequeue character 
+				MOVS	R2,#Q_BUF_SZ			;init queue
+				BL		Dequeue
+				BCS		TxDA					;failed dequeue operation
+				LDR		R1,=UART0_BASE			;if dequeue was successful
+				STRB	R0,[R1,#UART0_D_OFFSET]
+				B		endISR
+TxDA			MOVS	R1,#UART0_C2_T_RI
+				STRB	R1,[R0,#UART0_C2_OFFSET]
+				B		endISR
+CheckRx			LDR		R0,=UART0_BASE
+				LDRB	R1,[R0,#UART0_S1_OFFSET] ;check for rx interrupt
+				MOVS	R2,#0x10
+				ANDS 	R1,R1,R2
+				CMP		R1,#0
+				BEQ		endISR
+				LDR		R0,=UART0_BASE
+				LDRB	R3,[R0,#UART0_D_OFFSET]
+				LDR		R1,=RxQueueRecord
+				MOVS	R0,R3
+				BL		Enqueue					;enqueue char
+endISR			CPSIE	I						;re-enable all interrupts
+				POP		{R0-R3,PC}				;restore all register values and program counter
+				ENDP
+					
+PIT_IRQHandler	PROC	{},{}
+;This subroutine handles the case where on a PIT interrupt, if the (byte) 
+;variable RunStopWatch is zero, the (word) variable Count is incremented
+;otherwise, it leaves Count unchanged. Finally, the ISR clears the interrupt condition
+;before exiting. 
+;Interrupt condition is then cleard
+;Input Parameters:	NONE
+;Output Parameters: NONE
+;Modified register list: NONE 
+;Subroutines called: NONE
+				LDR		R0,=RunStopWatch
+				LDRB	R0,[R0,#0]
+				CMP		R0,#0
+				BNE		PIT_ISR_INCR
+				B		end_PIT_ISR
+PIT_ISR_INCR	LDR		R0,=Count				;increment Count if StopWatch is running
+				LDR		R1,[R0,#0]
+				ADDS	R1,R1,#1
+				STR		R1,[R0,#0]
+end_PIT_ISR		LDR 	R0,=PIT_CH0_BASE		;clear interrupt condition
+				LDR		R1,=PIT_TFLG_TIF_MASK
+				STR		R1,[R0,#PIT_TFLG_OFFSET]
+				BX		LR
+				ENDP
+					
+GetChar			PROC	{},{}
+;This subroutine dequeues a char from the receive queue and returns it in R0
+;Input Parameters: NONE
+;Output Parameters: R0- the char dequeued from the receive queue
+;Modified reg list: R0
+;Subroutines called: Dequeue
+				PUSH	{R1,R2,LR}				;preserve reg list and R1 and R2
+GetCharLoop		LDR		R1,=RxQueueRecord		;load queue record address into R1
+				CPSID	I						;mask interrupts
+				BL		Dequeue					;dequeue a character from receive queue	
+				CPSIE	I						;re-enable interrupts
+				BCS		GetCharLoop				;if carry is set after return from Dequeue subroutine, branch back to getcharloop
+				POP		{R1,R2,PC}				;restore registers R1, R2 and program counter
+				ENDP							;end subroutine
+		
+PutChar			PROC	{},{}
+;Enqueues the character from R0 into transmit queue
+;Input Parameters: R0- The character to be enqueued into transmit queue
+;Output Parameters: NONE (echoes character to terminal)
+;Modified register list: NONE
+;Subroutines called: Enqueue
+				PUSH	{R0,R1,LR}				;preserve list of registers and R0 and R1
+PutCharLoop		LDR		R1,=TxQueueRecord		;get address of TxQueueRecord into R1
+				CPSID 	I						;mask interrupts
+				BL		Enqueue					;enqueue character in R0 to transmit queue
+				CPSIE	I						;re-enable interrupts
+				BCS		PutCharLoop				;branch back to PutCharLoop if C is set after return from Enqueue subroutine
+				MOVS	R1,#UART0_C2_TI_RI		;Enable UART0 RT and rx interrupt
+				LDR		R0,=UART0_BASE			
+				STRB	R1,[R0,#UART0_C2_OFFSET]
+				POP		{R0,R1,PC}				;restore registers and program counter
+				ENDP		
+
+Init_UART0_IRQ	PROC	{},{}
+;Initializes the KL46 UART0 to be used with interrupts 
+;through port A pins 1 and 2 for polled serial I/O using a format of 8 data bits, 
+;no parity, and one stop bit at 9600 baud
+;Parameters
+;	Inputs: 				NONE
+;	Outputs: 				NONE
+;Modified Register list: 	NONE
+;Subroutines called: InitQueue
+				;push the registers R0,R1 and R2 onto stack
+				PUSH	{R0-R2,LR}	
+				;initialize transmit queue
+				LDR		R0,=TxQueue
+				LDR		R1,=TxQueueRecord
+				BL		InitQueue
+				;initialize receive queue
+				LDR		R0,=RxQueue
+				LDR		R1,=RxQueueRecord
+				BL		InitQueue
+				;select MCGPLLCKL / 2 as UART0 clock src
+				LDR		R0,=SIM_SOPT2
+				LDR		R1,=SIM_SOPT2_UART0SRC_MASK
+				LDR		R2,[R0,#0]
+				BICS	R2,R2,R1
+				LDR		R1,=SIM_SOPT2_UART0_MCGPLLCLK_DIV2
+				ORRS	R2,R2,R1
+				STR		R2,[R0,#0]
+				;enable external connection for UART0
+				LDR		R0,=SIM_SOPT5
+				LDR		R1,=SIM_SOPT5_UART0_EXTERN_MASK_CLEAR
+				LDR		R2,[R0,#0]
+				BICS	R2,R2,R1
+				STR		R2,[R0,#0]
+				;enable clock for UART0 module
+				LDR		R0,=SIM_SCGC4
+				LDR		R1,=SIM_SCGC4_UART0_MASK
+				LDR		R2,[R0,#0]
+				ORRS	R2,R2,R1
+				STR		R2,[R0,#0]
+				;enable clock for Port A module
+				LDR		R0,=SIM_SCGC5
+				LDR		R1,=SIM_SCGC5_PORTA_MASK
+				LDR		R2,[R0,#0]
+				ORRS	R2,R2,R1
+				STR		R2,[R0,#0]
+				;connect PORT A Pin 1 (PTA1) to UART0 Rx(J1 Pin 02)
+				LDR		R0,=PORTA_PCR1
+				LDR		R1,=PORT_PCR_SET_PTA1_UART0_RX
+				STR		R1,[R0,#0]
+				;connect PORT A Pin 2 (PTA2) to UART0 Tx (J1 Pin 04)
+				LDR		R0,=PORTA_PCR2
+				LDR		R1,=PORT_PCR_SET_PTA2_UART0_TX
+				STR		R1,[R0,#0]
+				;disable UART0 receiver and transmitter 
+				LDR		R0,=UART0_BASE
+				MOVS	R1,#UART0_C2_T_R
+				LDRB	R2,[R0,#UART0_C2_OFFSET]
+				BICS	R2,R2,R1
+				STRB	R2,[R0,#UART0_C2_OFFSET]
+				;Initialize NVIC for UART0 Interrupts
+				;Set UART0 IRQ Priority
+				LDR R0, =UART0_IPR
+				LDR R1, =NVIC_IPR_UART0_MASK
+				LDR R2, =NVIC_IPR_UART0_PRI_3
+				LDR R3, [R0, #0]
+				BICS R3, R3, R1
+				ORRS R3, R3, R2
+				STR R3, [R0, #0]
+				;Clear any pending UART0 Interrupts
+				LDR R0, =NVIC_ICPR
+				LDR R1, =NVIC_ICPR_UART0_MASK
+				STR R1, [R0, #0]
+				;Unmask UART0 interrupts
+				LDR R0, =NVIC_ISER
+				LDR R1, =NVIC_ISER_UART0_MASK
+				STR R1, [R0, #0]
+				;set UART0 for 9600 baud, 8N1 protocol
+				MOVS 	R1,#UART0_BDH_9600
+				STRB  	R1,[R0,#UART0_BDH_OFFSET] 
+				MOVS  	R1,#UART0_BDL_9600 
+				STRB 	R1,[R0,#UART0_BDL_OFFSET] 
+				MOVS  	R1,#UART0_C1_8N1 
+				STRB  	R1,[R0,#UART0_C1_OFFSET] 
+				MOVS  	R1,#UART0_C3_NO_TXINV 
+				STRB  	R1,[R0,#UART0_C3_OFFSET] 
+				MOVS  	R1,#UART0_C4_NO_MATCH_OSR_16 
+				STRB 	R1,[R0,#UART0_C4_OFFSET] 
+				MOVS  	R1,#UART0_C5_NO_DMA_SSR_SYNC 
+				STRB  	R1,[R0,#UART0_C5_OFFSET] 
+				MOVS  	R1,#UART0_S1_CLEAR_FLAGS 
+				STRB  	R1,[R0,#UART0_S1_OFFSET] 
+				MOVS  	R1, #UART0_S2_NO_RXINV_BRK10_NO_LBKDETECT_CLEAR_FLAGS 
+				STRB  	R1,[R0,#UART0_S2_OFFSET] 
+				;enable UART0 receiver and transmitter 
+				MOVS  	R1,#UART0_C2_T_R 
+				STRB  	R1,[R0,#UART0_C2_OFFSET] 
+				;pop the registers on stack i.e. reset the used registers 
+				POP		{R0-R2,PC}
+				ENDP							;end subroutine
+					
+PutNumU			PROC	{},{}
+;this subroutine prints to the terminal screen the text decimal representation 
+;of the unsigned word value in R0.  
+;	Inputs : 	R0- the unsigned word value 
+;	Outputs: 	NONE
+;	Modified Registers list: 	NONE
+;   Subroutines called: DIVU
+				PUSH	{LR,R0-R7}				;push the register list and registers R0-R7 onto stack
+				MOVS	R1,R0					;move the unsigned word value into R1
+				MOVS 	R4,#0					;initialize counter
+				CMP		R1,#0					;compare R1 with 0
+				BEQ		stopZero				;if the Uword is 0, branch to stopZero
+beginNumU		MOVS	R0,#10					;move 10 into R0(divisor)
+				BL		DIVU					;branch to DIVU subroutine where R1 is dividend(Uword) and R0 is divisor(10) 
+				CMP		R7,#3					;R7 is used as a flag after return from DIVU to check if the dividend is 0 
+				BEQ		endLoop2				;if true, branch to endLoop2
+				PUSH	{R1}					;push remainder onto stack
+				MOVS	R1,R0					;move the value of quotient into R1
+				ADDS	R4,R4,#1				;add 1 to counter
+				B		beginNumU				;branch back to beginNumU till a branch OUT cond is satisfied
+endLoop2		POP		{R1}					;pop the first reminder from stack 
+				MOVS	R0,R1					;move that into R0
+				ADDS	R0,R0,#0x30				;convert to ascii
+				BL		PutChar					;branch to PutChar to echo that to terminal screen
+				CMP		R4,#0					;check if counter=0
+				BEQ		stop					;if true, branch to stop
+				SUBS	R4,R4,#1				;decrement counter 
+				CMP		R4,#0					;check if counter=0 again
+				BEQ		stop					;if true, branch to stop
+				B		endLoop2				;if counter is not 0 yet, keep looping back to endLoop2 to echo all the contents in remainder stack
+				
+stopZero		ADDS	R0,R0,#0x30				;convert 0 to ascii
+				BL		PutChar					;echo 0 to terminal
+stop			POP		{PC,R0-R7}				;restore program counter and the registers used
+				ENDP							;end subroutine
+					
+DIVU			PROC	{},{}
+;DIVU SUBROUTINE
+;Function: Divides the contents of Register 1 by Register 0
+;Input: R1 - Dividend, R0 - Divisor
+;Output: R1 - Remainder, R0 - Quotient
+;Modifies: R0,R1,R7(used as a flag to be implemented in PutNumU)
+;Subroutines called: NONE
+				CMP		R0,#0					;compares divisor with 0
+				BEQ		EndLoop0				;if 0 branch to EndLoop0
+				CMP		R1,#0					;compares dividend with 0
+				BEQ		EndLoop1				;if 0 branch to EndLoop1
+				PUSH	{R3}					;push R3 onto stack
+				MOVS	R3,#0					;moves 0 into R3, counter
+while			CMP		R1,R0					;compares R1 and R0
+				BLO		EndLoop					;if R1<R0, branch to EndLoop
+				SUBS	R1,R1,R0				;subtracts R0 from R1 and put value in R1
+				ADDS	R3,R3,#1				;adds 1 to R3 and puts value in R3
+				B		while					;branches back to while label(loop)
+EndLoop			MOVS	R0,R3					;moves R3 into R0
+				POP		{R3}					;pops R3 i.e. restores value in R3
+				PUSH	{R0,R1}					;push R0 and R1 onto stack
+				;clears C flag without changing other flags
+				MRS		R0,APSR		
+				MOVS	R1,#0x20				;moves 0x20 into R1
+				LSLS	R1,R1,#24				;left shifts R1 by 24 bits
+				BICS	R0,R0,R1
+				MSR		APSR,R0			
+				POP		{R1,R0}					;restore values in R1 and R0
+				B		endLoopFinal			;branches to endLoopFinal
+EndLoop0		MOVS	R0,#0					;if divisor is 0
+				;sets C flag without changing other flags
+				PUSH	{R0,R1}	
+				MRS		R0,APSR
+				MOVS	R1,#0x20				;moves 0x20 into R1
+				LSLS	R1,R1,#24				;left shifts R1 by 24 bits
+				ORRS	R0,R0,R1
+				MSR		APSR,R0
+				POP		{R1,R0}					;restore values in R1 and R0
+				B		endLoopFinal			;branches to endLoopFinal
+EndLoop1		MOVS	R0,#0					;if dividend is 0
+				;clears C flag without changing other flags
+				PUSH	{R0,R1}			
+				MRS		R0,APSR
+				MOVS	R1,#0x20				;moves 0x20 into R1
+				LSLS	R1,R1,#24				;left shifts R1 by 24 bits
+				BICS	R0,R0,R1
+				MSR		APSR,R0
+				MOVS	R7,#3
+				POP		{R1,R0}					;restores R1 and R0
+				B		endLoopFinal			;branches to endLoopFinal
+endLoopFinal
+				BX		LR						;branch back to main loop
+				ENDP							;end subroutine
+;end subroutine
+;>>>>>   end subroutine code <<<<<
+            ALIGN
+;**********************************************************************
+;Constants
+            AREA    MyConst,DATA,READONLY
+;>>>>> begin constants here <<<<<
+			ALIGN
+;>>>>>   end constants here <<<<<
+			ALIGN
+;**********************************************************************
+;Variables
+            AREA    MyData,DATA,READWRITE
+;>>>>> begin variables here <<<<<
+QBuffer			SPACE	Q_BUF_SZ	;contents of queue
+QRecord			SPACE	Q_REC_SZ	;queue management rec
+				ALIGN
+RxQueue			SPACE	Q_BUF_SZ
+RxQueueRecord	SPACE	Q_REC_SZ
+				ALIGN
+TxQueue			SPACE	Q_BUF_SZ
+TxQueueRecord	SPACE	Q_REC_SZ
+				ALIGN
+RunStopWatch	SPACE	1
+				ALIGN
+Count			SPACE	4
+				ALIGN
+;>>>>>   end variables here <<<<<
+            END

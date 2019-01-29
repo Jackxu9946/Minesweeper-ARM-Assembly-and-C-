@@ -1,0 +1,112 @@
+/*********************************************************************/
+/* Lab Exercise Twelve                                               */
+/* Name:  R. W. Melton                                               */
+/* Date:  April 9, 2018                                              */
+/* Class:  CMPE 250                                                  */
+/* Section:  All sections                                            */
+/*********************************************************************/
+typedef int Int32;
+typedef short int Int16;
+typedef char Int8;
+typedef unsigned int UInt32;
+typedef unsigned short int UInt16;
+typedef unsigned char UInt8;
+
+#define SLIDER_LENGTH 40
+#define TOTAL_ELECTRODE 2
+
+/*LCD HELPER COMPONENTS*/
+#ifndef __TOUCH_SEN_H_
+#define __TOUCH_SEN_H_
+#include "MKL46Z4.h"
+
+void Touch_Init(void);
+int Touch_Scan_LH(void);
+int Touch_Scan_HL(void);
+
+// Macros
+#define SCAN_OFFSET 544  // Offset for scan range
+#define SCAN_DATA TSI0->DATA & 0xFFFF // Accessing the bits held in TSI0_DATA_TSICNT
+#endif
+
+/* Chose the correct TSI channel for the electrode number */
+#ifdef FRDM_REVA
+#define ELECTRODE0   TSI2
+#define ELECTRODE1   TSI3
+#else
+#define ELECTRODE0   TSI9
+#define ELECTRODE1   TSI10
+#endif
+
+#define ELECTRODE2   _TSI0
+#define ELECTRODE3   TSI1
+#define ELECTRODE4   TSI2
+#define ELECTRODE5   TSI3
+#define ELECTRODE6   TSI4
+#define ELECTRODE7   TSI5
+#define ELECTRODE8   TSI6
+#define ELECTRODE9   TSI7
+#define ELECTRODE10  TSI8
+#define ELECTRODE11  TSI11
+#define ELECTRODE12  TSI12
+#define ELECTRODE13  TSI13
+#define ELECTRODE14  TSI14
+#define ELECTRODE15  TSI15
+
+extern UInt8 total_electrode;
+extern UInt8 elec_array[16];
+extern UInt16 gu16TSICount[16];
+extern UInt16 gu16Baseline[16];
+extern UInt16 gu16Delta[16];
+extern UInt8 ongoing_elec;
+extern UInt8 AbsolutePercentegePosition;
+extern UInt8 AbsoluteDistancePosition;
+extern UInt8 end_flag;
+extern UInt32 Count;
+extern UInt32 RunStopWatch;
+
+/* assembly language subroutines */
+char GetChar (void);
+void GetStringSB (char String[], int StringBufferCapacity);
+void Init_UART0_IRQ (void);
+void PutChar (char Character);
+void PutNumHex (UInt32);
+void PutNumUB (UInt8);
+void PutStringSB (char String[], int StringBufferCapacity);
+void Init_PIT_IRQ(void);
+void Init_LED(void);
+void TimeStart(void);
+void LCD_PutHex(short int digval);
+
+/*
+C Function prototypes
+*/
+void difficulty(void);
+void easy(void);
+void intermediate(void);
+void hard(void);
+void expert(void);
+void Init_Board(void);
+void Print_Board(void);
+void input(void);
+void nineEleven(void);
+void outputFinalBoard(void);
+void win(void);
+void play_again(void);
+void rules(void);
+void game_over(void);
+void restart(void);
+void NextLine(void);
+void printscore(void);
+void start_game(void);
+void Times_up(void);
+void BlinkLED1(void);
+void BlinkLED2(void);
+void Red_LED_ON(void);
+void Green_LED_ON(void);
+void SegLCD_Init(void);
+void Init_TSI(void);
+void TSI0_IRQHandler(void);
+void self_calibration(void);
+void TSI_slider_read(void);
+void change_electrode(void);
